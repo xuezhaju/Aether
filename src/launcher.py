@@ -92,6 +92,28 @@ def is_library_allowed(library, current_os):
     
     return allowed
 
+   
+def build_classpath():
+    """构建 classpath 字符串"""
+    jar_files = []
+    
+    # 1. 添加所有 libraries jar
+    for jar in LIBRARIES_DIR.rglob("*.jar"):
+        jar_files.append(str(jar))
+    
+    # 2. 添加游戏本体 jar
+    game_jar = VERSION_DIR / f"{VERSION}.jar"
+    if game_jar.exists():
+        jar_files.append(str(game_jar))
+    
+    # 3. 用系统分隔符连接
+    separator = os.pathsep
+    classpath = separator.join(jar_files)
+    
+    return classpath
+
+
+
 
 # 主程序
 if __name__ == "__main__":
@@ -170,4 +192,64 @@ if __name__ == "__main__":
         url = f"https://resources.download.minecraft.net/{sub_path}/{hash_val}"
         download_files(url, file_path)
 
-    print("\n下载完成！")
+    print("下载完成")
+
+    # 7. 构建classpath
+
+    classpath = build_classpath()
+
+    print(f"Classpath 长度: {len(classpath)} 字符")
+    print(f"包含 {len(classpath.split(os.pathsep))} 个 jar 文件")
+
+
+    # 8. 构建并启动
+
+    # 1. 找到 Java 路径（先直接用 "java"）
+    java_path = "java"  # Linux/Mac
+    if sys.platform == "win32":
+        java_path = "javaw.exe"  # Windows 用 javaw 不显示控制台
+
+    # 2. 替换启动参数中的变量
+    minecraft_args = version_data["minecraftArguments"]
+    minecraft_args = minecraft_args.replace("${auth_player_name}", "AetherPlayer")
+    minecraft_args = minecraft_args.replace("${version_name}", VERSION)
+    minecraft_args = minecraft_args.replace("${game_directory}", str(GAME_DIR))
+    minecraft_args = minecraft_args.replace("${assets_root}", str(GAME_DIR / "assets"))
+    minecraft_args = minecraft_args.replace("${assets_index_name}", version_data["assetIndex"]["id"])
+    minecraft_args = minecraft_args.replace("${auth_uuid}", "offline")
+    minecraft_args = minecraft_args.replace("${auth_access_token}", "offline")
+    minecraft_args = minecraft_args.replace("${user_properties}", "{}")
+    minecraft_args = minecraft_args.replace("${user_type}", "legacy")
+
+    # 3. 组装完整命令
+    cmd = [
+        java_path,
+        f"-Djava.library.path={NATIVES_DIR}",
+        "-cp", classpath,
+        version_data["mainClass"]
+    ] + minecraft_args.split()
+
+    print("启动命令:")
+    print(" ".join(cmd))
+
+    # 4. 启动游戏
+    print("\n正在启动 Minecraft...")
+    try:
+        # 使用 Popen 可以获取输出（方便调试）
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True
+        )
+        
+        # 实时打印游戏输出
+        for line in process.stdout:
+            print(line, end='')
+        
+        process.wait()
+        
+    except FileNotFoundError:
+        print("错误: 找不到 Java，请确保已安装 Java 8")
+    except Exception as e:
+        print(f"启动失败: {e}")
