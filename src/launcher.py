@@ -175,24 +175,34 @@ if __name__ == "__main__":
         else:
             print(f"跳过: {name}")
     
-    # 6. 下载assets
+    # 6. 下载 assets
+    print("\n正在下载资源文件...")
+
+    # 下载索引文件到正确位置（根据 Wiki 标准）
+    asset_index_id = version_data["assetIndex"]["id"]  # "1.8"
     asset_index_url = version_data["assetIndex"]["url"]
-    asset_index_path = VERSION_DIR / "asset_index.json"
-    download_files(asset_index_url, asset_index_path)  # 用同一个函数
+    asset_index_path = GAME_DIR / "assets" / "indexes" / f"{asset_index_id}.json"
+    asset_index_path.parent.mkdir(parents=True, exist_ok=True)
+
+    download_files(asset_index_url, asset_index_path)
 
     # 读取索引
     with open(asset_index_path, "r") as f:
         asset_index = json.load(f)
 
-    # 下载具体资源
+    # 下载具体资源（位置正确）
+    assets_objects_dir = GAME_DIR / "assets" / "objects"
+    print(f"资源文件将保存到: {assets_objects_dir}")
+
     for key, value in asset_index["objects"].items():
         hash_val = value["hash"]
         sub_path = hash_val[:2]
-        file_path = GAME_DIR / "assets" / "objects" / sub_path / hash_val
+        file_path = assets_objects_dir / sub_path / hash_val
         url = f"https://resources.download.minecraft.net/{sub_path}/{hash_val}"
         download_files(url, file_path)
 
-    print("下载完成")
+    print("资源文件下载完成")
+
 
     # 7. 构建classpath
 
