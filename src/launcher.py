@@ -1,265 +1,333 @@
-import requests
-import json
-import zipfile
-import subprocess
-import os
 import sys
+import json
+import subprocess
+import zipfile
 from pathlib import Path
 
-
-# 1. 定义基本路径
-GAME_DIR = Path("./minecraft")
-VERSION = "1.8.9"
-VERSION_DIR = GAME_DIR / "versions" / VERSION
-LIBRARIES_DIR = GAME_DIR / "libraries"
-NATIVES_DIR = VERSION_DIR / f"{VERSION}-natives"
-
-
-# 2. 创建必要的文件夹
-GAME_DIR.mkdir(exist_ok=True)
-VERSION_DIR.mkdir(parents=True, exist_ok=True)
-LIBRARIES_DIR.mkdir(parents=True, exist_ok=True)
-NATIVES_DIR.mkdir(parents=True, exist_ok=True)
+from config import GAME_DIR
+from downloader import download_file
+from utils import (
+    get_current_os, is_library_allowed,
+    get_version_list, display_versions, select_version, download_version_json
+)
 
 
-def download_json(url, file_path):
-    """下载 JSON 文件"""
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        json_data = response.json()
-        with open(file_path, 'w') as json_file:
-            json.dump(json_data, json_file, indent=4)
-        print(f"JSON文件已保存至 {file_path}")
-        return json_data
-    except Exception as e:
-        print(f"请求失败: {e}")
-        return None
+def setup_version_paths(version_id):
+    from config import GAME_DIR
+    version_dir = GAME_DIR / "versions" / version_id
+    libraries_dir = GAME_DIR / "libraries"
+    natives_dir = version_dir / f"{version_id}-natives"
+    assets_dir = GAME_DIR / "assets"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    libraries_dir.mkdir(parents=True, exist_ok=True)
+    natives_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    return version_dir, libraries_dir, natives_dir, assets_dir
 
 
-def download_files(url, path):
-    """下载 jar, assets  等文件到指定路径"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    
-    if path.exists():
-        print(f"  已存在: {path.name}")
-        return True
-    
-    try:
-        print(f"  下载中: {path.name}")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        
-        with open(path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"  完成: {path.name}")
-        return True
-    except Exception as e:
-        print(f"  下载失败: {path.name} - {e}")
-        return False
-
-
-def get_current_os():
-    """获取当前操作系统（Mojang 的命名方式）"""
-    if sys.platform == "win32":
-        return "windows"
-    elif sys.platform == "darwin":
-        return "osx"
-    else:
-        return "linux" 
-
-
-def rule_matches(rule, current_os):
-    """判断单条规则是否匹配当前系统"""
-    if "os" not in rule:
-        return True
-    return rule["os"].get("name") == current_os
-
-
-def is_library_allowed(library, current_os):
-    """判断一个库是否允许在当前系统下载"""
-    if "rules" not in library:
-        return True
-    
-    allowed = False
-    for rule in library["rules"]:
-        if rule_matches(rule, current_os):
-            if rule["action"] == "allow":
-                allowed = True
-            elif rule["action"] == "disallow":
-                allowed = False
-    
-    return allowed
-
-   
-def build_classpath():
-    """构建 classpath 字符串"""
-    jar_files = []
-    
-    # 1. 添加所有 libraries jar
-    for jar in LIBRARIES_DIR.rglob("*.jar"):
-        jar_files.append(str(jar))
-    
-    # 2. 添加游戏本体 jar
-    game_jar = VERSION_DIR / f"{VERSION}.jar"
-    if game_jar.exists():
-        jar_files.append(str(game_jar))
-    
-    # 3. 用系统分隔符连接
-    separator = os.pathsep
-    classpath = separator.join(jar_files)
-    
-    return classpath
-
-
-
-
-# 主程序
-if __name__ == "__main__":
-    print("=== Aether Launcher ===")
-    
-    # 加载版本 JSON
-    version_json_path = VERSION_DIR / f"{VERSION}.json"
-    
-    if not version_json_path.exists():
-        print("正在下载版本信息...")
-        version_url = "https://piston-meta.mojang.com/v1/packages/d546f1707a3f2b7d034eece5ea2e311eda875787/1.8.9.json"
-        version_data = download_json(version_url, version_json_path)
-    else:
-        with open(version_json_path, "r") as f:
-            version_data = json.load(f)
-    
-    if not version_data:
-        print("无法加载版本信息")
-        sys.exit(1)
-    
-    current_os = get_current_os()
-    print(f"当前系统: {current_os}")
-    print("-" * 50)
-    
-    # 4. 下载 game.jar
+def download_game_jar(version_data, version_dir, version_id):
     print("\n正在下载游戏本体...")
     client_url = version_data["downloads"]["client"]["url"]
-    client_path = VERSION_DIR / f"{VERSION}.jar"
-    download_files(client_url, client_path)
-    
-    # 5. 下载所有 libraries
+    client_path = version_dir / f"{version_id}.jar"
+    download_file(client_url, client_path)
+
+
+def download_all_libraries(version_data, current_os, libraries_dir, natives_dir):
     print("\n正在下载 libraries...")
     for lib in version_data["libraries"]:
         name = lib.get("name", "unknown")
-        
         if is_library_allowed(lib, current_os):
-            # 处理普通 artifact
             if "artifact" in lib.get("downloads", {}):
                 url = lib["downloads"]["artifact"]["url"]
-                path = LIBRARIES_DIR / lib["downloads"]["artifact"]["path"]
-                download_files(url, path)
-            
-            # 处理 natives（classifiers）
+                path = libraries_dir / lib["downloads"]["artifact"]["path"]
+                download_file(url, path)
             if "classifiers" in lib.get("downloads", {}):
                 classifiers = lib["downloads"]["classifiers"]
-                # 查找匹配当前系统的 natives
                 native_key = f"natives-{current_os}"
                 if native_key in classifiers:
                     url = classifiers[native_key]["url"]
-                    path = LIBRARIES_DIR / classifiers[native_key]["path"]
-                    
-                    # 下载 natives jar
-                    if download_files(url, path):
-                        # 解压到 NATIVES_DIR
+                    path = libraries_dir / classifiers[native_key]["path"]
+                    if download_file(url, path):
                         print(f"  解压中: {path.name}")
                         with zipfile.ZipFile(path, 'r') as zip_ref:
-                            zip_ref.extractall(NATIVES_DIR)
-                        print(f"  解压完成到: {NATIVES_DIR}")
+                            zip_ref.extractall(natives_dir)
+                        print(f"  解压完成到: {natives_dir}")
         else:
             print(f"跳过: {name}")
-    
-    # 6. 下载 assets
+
+
+def download_all_assets(version_data, assets_dir):
     print("\n正在下载资源文件...")
-
-    # 下载索引文件到正确位置（根据 Wiki 标准）
-    asset_index_id = version_data["assetIndex"]["id"]  # "1.8"
+    asset_index_id = version_data["assetIndex"]["id"]
     asset_index_url = version_data["assetIndex"]["url"]
-    asset_index_path = GAME_DIR / "assets" / "indexes" / f"{asset_index_id}.json"
+    asset_index_path = assets_dir / "indexes" / f"{asset_index_id}.json"
     asset_index_path.parent.mkdir(parents=True, exist_ok=True)
-
-    download_files(asset_index_url, asset_index_path)
-
-    # 读取索引
+    download_file(asset_index_url, asset_index_path)
     with open(asset_index_path, "r") as f:
         asset_index = json.load(f)
-
-    # 下载具体资源（位置正确）
-    assets_objects_dir = GAME_DIR / "assets" / "objects"
+    assets_objects_dir = assets_dir / "objects"
     print(f"资源文件将保存到: {assets_objects_dir}")
-
     for key, value in asset_index["objects"].items():
         hash_val = value["hash"]
         sub_path = hash_val[:2]
         file_path = assets_objects_dir / sub_path / hash_val
         url = f"https://resources.download.minecraft.net/{sub_path}/{hash_val}"
-        download_files(url, file_path)
-
+        download_file(url, file_path)
     print("资源文件下载完成")
 
 
-    # 7. 构建classpath
+def build_launch_command(version_data, version_id, game_dir, version_dir, natives_dir, assets_dir, classpath):
+    import sys as _sys
+    import subprocess as _subprocess
+    import shlex
+    
+    # 检测版本需要的 Java
+    parts = version_id.split('.')
+    if parts[0] == "1":
+        major = int(parts[1])
+    else:
+        major = int(parts[0]) if parts[0].isdigit() else 0
 
-    classpath = build_classpath()
+    # 选择 Java 版本
+    if version_id.startswith("26.") or major >= 25:
+        # 最新快照需要 Java 26
+        java_path = "/usr/lib/jvm/java-26-openjdk/bin/java"
+        print(f"版本 {version_id} 需要 Java 26") 
+    elif major >= 18 or version_id.startswith("1.18") or version_id.startswith("1.19") or version_id.startswith("1.20") or version_id.startswith("1.21"):
+        java_paths = ["/usr/lib/jvm/java-17-openjdk/bin/java"]
+        print(f"版本 {version_id} 需要 Java 17")
+    else:
+        java_paths = ["/usr/lib/jvm/java-8-openjdk/bin/java"]
+        print(f"版本 {version_id} 需要 Java 8")    
+    # 构建命令
+    cmd = [java_path]
+    
+    # Java 17 不支持的参数列表
+    unsupported_args = [
+        "--sun-misc-unsafe-memory-access=allow",
+        "--add-modules=jdk.incubator.vector",
+        "-XX:+UseZGC",
+        "-XX:+UseG1GC",
+    ]
+    
+    # 添加 JVM 参数（过滤不支持的）
+    if "arguments" in version_data and "jvm" in version_data["arguments"]:
+        for arg in version_data["arguments"]["jvm"]:
+            if isinstance(arg, str):
+                # 跳过不支持的参数
+                skip = False
+                for unsupported in unsupported_args:
+                    if unsupported in arg:
+                        print(f"  跳过不支持的 JVM 参数: {arg}")
+                        skip = True
+                        break
+                if skip:
+                    continue
+                # 替换变量
+                arg = arg.replace("${natives_directory}", str(natives_dir))
+                arg = arg.replace("${library_directory}", str(version_dir / "libraries"))
+                arg = arg.replace("${classpath}", classpath)
+                cmd.append(arg)
+    
+    # 添加基本参数
+    cmd.append(f"-Djava.library.path={natives_dir}")
+    cmd.extend(["-cp", classpath])
+    cmd.append(version_data["mainClass"])
+    
+    # 添加游戏参数
+    if "arguments" in version_data and "game" in version_data["arguments"]:
+        for arg in version_data["arguments"]["game"]:
+            if isinstance(arg, str):
+                cmd.append(arg)
+    else:
+        minecraft_args = version_data.get("minecraftArguments", "")
+        cmd.extend(shlex.split(minecraft_args))
+    
+    # 替换变量
+    replacements = {
+        "${auth_player_name}": "AetherPlayer",
+        "${version_name}": version_id,
+        "${game_directory}": str(game_dir),
+        "${assets_root}": str(assets_dir),
+        "${assets_index_name}": version_data["assetIndex"]["id"],
+        "${auth_uuid}": "offline",
+        "${auth_access_token}": "offline",
+        "${user_properties}": "{}",
+        "${user_type}": "legacy",
+        "${resolution_width}": "854",
+        "${resolution_height}": "480",
+    }
+    
+    cmd_str = " ".join(cmd)
+    for key, value in replacements.items():
+        cmd_str = cmd_str.replace(key, value)
+    
+    cmd = shlex.split(cmd_str)
+    
+    # 打印最终命令（调试用）
+    print(f"启动命令长度: {len(cmd)} 个参数")
+    
+    return cmd
 
-    print(f"Classpath 长度: {len(classpath)} 字符")
-    print(f"包含 {len(classpath.split(os.pathsep))} 个 jar 文件")
-
-
-    # 8. 构建并启动
-
-    # 1. 找到 Java 路径（先直接用 "java"）
-    java_path = "java"  # Linux/Mac
-    if sys.platform == "win32":
-        java_path = "javaw.exe"  # Windows 用 javaw 不显示控制台
-
-    # 2. 替换启动参数中的变量
-    minecraft_args = version_data["minecraftArguments"]
-    minecraft_args = minecraft_args.replace("${auth_player_name}", "AetherPlayer")
-    minecraft_args = minecraft_args.replace("${version_name}", VERSION)
-    minecraft_args = minecraft_args.replace("${game_directory}", str(GAME_DIR))
-    minecraft_args = minecraft_args.replace("${assets_root}", str(GAME_DIR / "assets"))
-    minecraft_args = minecraft_args.replace("${assets_index_name}", version_data["assetIndex"]["id"])
-    minecraft_args = minecraft_args.replace("${auth_uuid}", "offline")
-    minecraft_args = minecraft_args.replace("${auth_access_token}", "offline")
-    minecraft_args = minecraft_args.replace("${user_properties}", "{}")
-    minecraft_args = minecraft_args.replace("${user_type}", "legacy")
-
-    # 3. 组装完整命令
-    cmd = [
-        java_path,
-        f"-Djava.library.path={NATIVES_DIR}",
-        "-cp", classpath,
-        version_data["mainClass"]
-    ] + minecraft_args.split()
-
-    print("启动命令:")
-    print(" ".join(cmd))
-
-    # 4. 启动游戏
+def launch_game(cmd):
     print("\n正在启动 Minecraft...")
     try:
-        # 使用 Popen 可以获取输出（方便调试）
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
-        
-        # 实时打印游戏输出
         for line in process.stdout:
             print(line, end='')
-        
         process.wait()
-        
     except FileNotFoundError:
         print("错误: 找不到 Java，请确保已安装 Java 8")
     except Exception as e:
         print(f"启动失败: {e}")
+
+
+def download_version(version_id, version_url):
+    """下载指定版本"""
+    print(f"\n正在下载版本 {version_id}...")
+    version_dir, libraries_dir, natives_dir, assets_dir = setup_version_paths(version_id)
+    version_data = download_version_json(version_id, version_url, version_dir)
+    current_os = get_current_os()
+    
+    download_game_jar(version_data, version_dir, version_id)
+    download_all_libraries(version_data, current_os, libraries_dir, natives_dir)
+    download_all_assets(version_data, assets_dir)
+    
+    print(f"\n✅ 版本 {version_id} 下载完成！")
+    return version_data, version_dir, natives_dir, assets_dir
+
+
+def get_installed_versions():
+    """获取已安装的版本列表"""
+    versions_dir = GAME_DIR / "versions"
+    if not versions_dir.exists():
+        return []
+    
+    installed = []
+    for version_dir in versions_dir.iterdir():
+        if version_dir.is_dir():
+            version_id = version_dir.name
+            game_jar = version_dir / f"{version_id}.jar"
+            version_json = version_dir / f"{version_id}.json"
+            if game_jar.exists() and version_json.exists():
+                installed.append(version_id)
+    return installed
+
+
+def display_installed_versions(installed):
+    """显示已安装的版本"""
+    if not installed:
+        print("暂无已安装的版本")
+        return False
+    
+    print("\n已安装的版本：")
+    print("-" * 40)
+    for i, v in enumerate(installed):
+        print(f"{i+1:3}. {v}")
+    print("-" * 40)
+    return True
+
+
+def select_installed_version(installed):
+    """选择要运行的已安装版本"""
+    while True:
+        try:
+            choice = input("\n请选择要运行的版本（输入序号或版本号）: ").strip()
+            
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(installed):
+                    return installed[idx]
+                else:
+                    print(f"序号超出范围，请输入 1-{len(installed)}")
+                    continue
+            
+            # 直接匹配版本号
+            for v in installed:
+                if v == choice:
+                    return v
+            
+            print(f"找不到版本 '{choice}'")
+        except KeyboardInterrupt:
+            print("\n已取消")
+            return None
+
+
+def main():
+    print("=== Aether Launcher ===")
+    
+    while True:
+        print("\n请选择操作：")
+        print("1. 下载新版本")
+        print("2. 运行已安装的版本")
+        print("3. 退出")
+        
+        try:
+            choice = input("\n请输入选项 (1/2/3): ").strip()
+            
+            if choice == "1":
+                # 下载新版本
+                versions = get_version_list()
+                display_versions(versions, limit=20)
+                version_id, version_url = select_version(versions)
+                download_version(version_id, version_url)
+                
+            elif choice == "2":
+                # 运行已安装的版本
+                installed = get_installed_versions()
+                if not display_installed_versions(installed):
+                    print("请先下载版本（选择选项 1）")
+                    continue
+                
+                version_id = select_installed_version(installed)
+                if not version_id:
+                    continue
+                
+                print(f"\n准备启动 {version_id}...")
+                
+                # 加载版本数据
+                version_dir = GAME_DIR / "versions" / version_id
+                version_json_path = version_dir / f"{version_id}.json"
+                
+                with open(version_json_path, "r") as f:
+                    version_data = json.load(f)
+                
+                libraries_dir = GAME_DIR / "libraries"
+                natives_dir = version_dir / f"{version_id}-natives"
+                assets_dir = GAME_DIR / "assets"
+                
+                # 构建 classpath
+                jar_files = []
+                for jar in libraries_dir.rglob("*.jar"):
+                    jar_files.append(str(jar))
+                game_jar = version_dir / f"{version_id}.jar"
+                if game_jar.exists():
+                    jar_files.append(str(game_jar))
+                classpath = ":".join(jar_files)
+                
+                print(f"Classpath 包含 {len(jar_files)} 个 jar 文件")
+                
+                # 启动游戏
+                cmd = build_launch_command(version_data, version_id, GAME_DIR, version_dir, natives_dir, assets_dir, classpath)
+                launch_game(cmd)
+                
+            elif choice == "3":
+                print("再见！")
+                break
+            else:
+                print("无效选项，请输入 1、2 或 3")
+                
+        except KeyboardInterrupt:
+            print("\n再见！")
+            break
+        except Exception as e:
+            print(f"错误: {e}")
+
+
+if __name__ == "__main__":
+    main()
