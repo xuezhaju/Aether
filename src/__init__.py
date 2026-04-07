@@ -1,0 +1,2 @@
+"""Aether Launcher - Minecraft 启动器"""
+__version__ = "0.2.0"
