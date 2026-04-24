@@ -1,0 +1,14 @@
+[15:47:56] [Client thread/INFO]: Setting user: AetherPlayer
+[15:47:56] [Client thread/INFO]: (Session ID is token::)
+[15:47:57] [Client thread/INFO]: LWJGL Version: 2.9.4
+[15:47:57] [Client thread/INFO]: Reloading ResourceManager: Default
+[15:47:57] [Client thread/ERROR]: Couldn't initialize twitch stream
+[15:47:57] [Sound Library Loader/INFO]: Starting up SoundSystem...
+[15:47:58] [Thread-6/INFO]: Initializing LWJGL OpenAL
+[15:47:58] [Thread-6/INFO]: (The LWJGL binding of OpenAL.  For more information, see http://www.lwjgl.org)
+[15:47:58] [Thread-6/INFO]: OpenAL initialized.
+[15:47:58] [Sound Library Loader/INFO]: Sound engine started
+[15:47:59] [Client thread/INFO]: Created: 512x512 textures-atlas
+[15:48:03] [Client thread/INFO]: Stopping!
+[15:48:03] [Client thread/INFO]: SoundSystem shutting down...
+[15:48:04] [Client thread/WARN]: Author: Paul Lamb, www.paulscode.com
